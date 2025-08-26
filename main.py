@@ -62,23 +62,42 @@ def transform_dexa_ruleset(df, dexa_kb, api_key, logger=None, file_dir=None):
     if logger:
         logger.info(f"Extracted declared JS variables:\n{declared_variables}")
 
-    system_prompt = f"""
-You are a JavaScript expert working on a data transformation engine called DEXA.
-You help convert raw transformation rules into JavaScript logic.
+    # Resolve Knowledge Base content to always include in prompt (fallback to local file if needed)
+    _kb_content = dexa_kb or ""
+    if not _kb_content:
+        try:
+            _kb_paths = [
+                Path(__file__).parent / "knowledge_base" / "dexa_kb.md",
+                Path(__file__).parent / "knowledge base" / "dexa_kb.md",
+            ]
+            for _kb_path in _kb_paths:
+                if _kb_path.exists():
+                    with open(_kb_path, "r", encoding="utf-8") as _kb_file:
+                        _kb_content = _kb_file.read()
+                    break
+        except Exception:
+            _kb_content = ""
 
-Guidelines:
-- Always output valid, executable JavaScript.
-- Response format:
+    system_prompt = f"""
+You are a strict transpiler that rewrites Raw Logic into valid, executable JavaScript for the DEXA engine.
+Your job is to preserve the logic exactly while only fixing/normalizing it to valid JavaScript syntax.
+
+ABSOLUTE RULES:
+- Preserve variable names EXACTLY as they appear in Raw Logic (no renaming, casing changes, abbreviations, or additional suffixes/prefixes).
+- Preserve execution logic and evaluation order EXACTLY. Do not optimize, simplify, reorder, or omit any step.
+- Preserve field paths and field names EXACTLY as given. Use the same paths when reading from the input and when writing to the output.
+- Use 'msg' as the input object and 'tmp' as the output object.
+- Only rewrite syntax into valid JavaScript. Do not introduce helper functions, comments, logs, or extra code.
+- If the logic cannot be interpreted, return the original Raw Logic as-is in the 'js' field.
+
+OUTPUT FORMAT:
 {{
   "js": "<JavaScript transformation logic>"
 }}
-- DO NOT wrap your response in markdown (like ```json).
-- DO NOT explain anything. No comments or helper text.
-- Use 'tmp' as the output object and 'msg' as the input.
-- If the logic cannot be interpreted, return the original rule as-is.
+Do NOT use markdown fences and do NOT add explanations.
 
-Knowledge Base:
-{dexa_kb}
+Knowledge Base (use for syntax and patterns; do NOT change logic/identifiers):
+{_kb_content}
 """
 
     for idx, row in valid_rows.iterrows():
@@ -99,20 +118,27 @@ Knowledge Base:
             continue
 
         user_prompt = f"""
-Transform the following business logic into a JavaScript function suitable for a data integration engine like DEXA.
+Convert the Raw Logic into valid JavaScript for DEXA with the following constraints.
 
-Context:
-- Input Field: {source_field}
-- Output Field: {target_field}
+Context (do not change these identifiers or paths):
+- Input Field Path: {source_field}
+- Output Field Path: {target_field}
 - Input Description: {input_desc}
 - Raw Logic: {rule}
 
-Return the JavaScript code in this format:
+Strict constraints:
+- Keep variable names EXACTLY as in Raw Logic.
+- Keep the execution logic EXACTLY the same; only rewrite syntax to valid JS.
+- Read input values from 'msg' using the same field paths as Raw Logic.
+- Write the final value to 'tmp' using the exact Output Field Path.
+- No new variables unless strictly necessary to express the same logic; if needed, use the same names from Raw Logic.
+- No comments, no explanations, no console logs.
+
+Return only JSON with this shape:
 {{
   "js": "<logic here>"
 }}
-
-DO NOT wrap in markdown. DO NOT include any explanation. Just return valid JSON.
+Do NOT wrap in markdown and do NOT add any other keys.
 """
 
         try:
